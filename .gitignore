@@ -1,0 +1,15 @@
+# ===== 密钥（绝不要提交）=====
+# 真实账号信息只留在本地这份 config.py 里；
+# 仓库里提供的是占位版 config.example.py。
+config.py
+
+# ===== 运行时产物（本机数据，与代码无关）=====
+news.db
+news.db.*
+log.txt
+__pycache__/
+*.pyc
+
+# ===== 本地临时脚本 =====
+_tmp_*.py
+.research/
