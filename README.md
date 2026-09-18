@@ -89,7 +89,7 @@ WantedBy=multi-user.target
 然后 `systemctl enable --now futures-mvp`。服务器上的效果与本机三层保障等价，
 且不依赖你的电脑开机。
 
-## 下一步（MVP 之后）
+## 下一步（MVP 之后） 有空会更新下一版
 
 1. 加交易所公告源（上期所官网为 Vue 渲染，需调其 AJAX 接口；可先加转载源）
 2. 加快讯源（财联社/金十）
