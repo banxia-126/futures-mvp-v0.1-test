@@ -47,8 +47,18 @@ def fetch_sina() -> list:
 
 
 def fetch_sources() -> list:
-    """所有资讯源的统一入口。以后在这里追加新源。"""
-    return fetch_sina()
+    """所有资讯源的统一入口。以后在这里追加新源。
+
+    按 URL 去重：不同频道（如新浪 2516/2517）会返回重叠条目，
+    不去重的话同一 URL 会在同一批出现两次，被判两遍、推两条。
+    """
+    seen, out = set(), []
+    for it in fetch_sina():
+        if it["url"] in seen:
+            continue
+        seen.add(it["url"])
+        out.append(it)
+    return out
 
 
 def fetch_body(url: str) -> str:
@@ -103,6 +113,7 @@ def llm_summarize(items: list):
                 json={
                     "model": config.LLM_MODEL,
                     "temperature": 0.3,
+                    "max_tokens": getattr(config, "LLM_MAX_TOKENS", 16000),
                     "messages": [
                         {"role": "system", "content": sys_prompt},
                         {"role": "user",
@@ -110,10 +121,22 @@ def llm_summarize(items: list):
                     ],
                     "response_format": {"type": "json_object"},
                 },
-                timeout=60,
+                timeout=120,
             )
-            r.raise_for_status()
-            content = r.json()["choices"][0]["message"]["content"]
+            if r.status_code != 200:
+                # 不能只写 r.raise_for_status()：它把响应体整个丢掉，只剩一句
+                # 没有信息量的 "400 Client Error"。模型名填错这类问题会被彻底
+                # 吞掉，症状是「AI 静默失效、每轮都降级」，很难查。
+                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+            choice = r.json()["choices"][0]
+            content = (choice["message"].get("content") or "").strip()
+            if not content:
+                # 推理模型（deepseek-flash / deepseek-v4-pro）会先思考再写正文，
+                # max_tokens 不够时 token 全烧在思考上、正文为空，
+                # 且 finish_reason=length —— 看起来「调用成功但没有输出」。
+                raise RuntimeError(
+                    f"返回正文为空（finish_reason={choice.get('finish_reason')}）；"
+                    f"若模型是推理型，请加大 LLM_MAX_TOKENS")
             return json.loads(content).get("items", [])
         except Exception as e:
             print(f"[news] LLM 调用失败（第{attempt+1}次）: {e}")
@@ -139,8 +162,10 @@ def run_cycle():
     if not config.LLM_API_KEY:
         print("[news] 未配置 LLM_API_KEY，降级为推送原文标题")
         for it in items:
-            push.push(f"【资讯】{it['title']}\n{it['url']}")
-            db.mark_done(it["url"], "confirmed")
+            if push.push(f"【资讯】{it['title']}\n{it['url']}"):
+                db.mark_done(it["url"], "confirmed")
+            else:
+                db.mark_attempt(it["url"])
         return
 
     results = llm_summarize(items)
@@ -165,8 +190,13 @@ def run_cycle():
         if not r.get("relevant"):
             db.mark_done(it["url"], "dropped")
             continue
-        push.push(
+        ok = push.push(
             f"【甲醇·{r.get('direction', '')}】{r.get('summary', '')}\n"
             f"来源：{it['source']}｜{it['title']}\n{it['url']}"
         )
-        db.mark_done(it["url"], "confirmed")
+        if ok:
+            db.mark_done(it["url"], "confirmed")
+        else:
+            # 推送失败（断网/限流）不能标终态，否则这条资讯静默丢失。
+            # 保持可重试，attempts 上限和 6 小时过期兜底，不会无限循环。
+            db.mark_attempt(it["url"])
