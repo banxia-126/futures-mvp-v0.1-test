@@ -15,7 +15,11 @@ PUSH_WEBHOOK = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=这里换�
 # platform.deepseek.com 注册 → 充值几块钱 → API Keys 里创建
 LLM_API_KEY = "sk-这里换成你的key"
 LLM_BASE_URL = "https://api.deepseek.com"
+# ⚠️ LLM_MODEL 必须填 API 模型 ID，不是官网的显示名（显示名会返回 400，
+#    且会被静默降级成「推送标题原文」，表现为 AI 一直没生效）。
 LLM_MODEL = "deepseek-chat"
+# 输出上限；推理型模型给宽些，防正文被思考过程挤掉。
+LLM_MAX_TOKENS = 16000
 
 # ===== 3. 行情：TqSdk（快期）=====
 # shinnytech.com 注册免费快期账号（不需要实盘开户）
@@ -65,6 +69,7 @@ DRIVERS = "煤价（煤制甲醇成本）、天然气价（海外气头装置）
 NEWS_INTERVAL = 900        # 资讯轮询间隔（秒），默认 15 分钟
 NEWS_BATCH_MAX = 20        # 每轮送 LLM 判断的资讯条数上限
 HEARTBEAT_HOUR = 8         # 每天几点推"系统在线"心跳
+FUND_FETCH_HOUR = 18       # 每天几点后抓基本面数据（仓单/库存）落库
 DB_PATH = "news.db"        # 去重数据库文件
 SINA_LIDS = ["2516", "2517"]       # 新浪滚动新闻频道（财经/股市）
 NEWS_NUM_PER_LID = 30      # 每个频道每轮取最新条数

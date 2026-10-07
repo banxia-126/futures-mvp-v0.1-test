@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""资讯模块：新浪滚动新闻 → 去重 → 关键词过滤 → DeepSeek 总结 → 推送
+"""资讯模块：多源快讯（新浪滚动 / 东财 7×24 / 金十）→ 去重 → 关键词过滤 → DeepSeek 总结 → 推送
 
-MVP 只有新浪一个源；以后加交易所公告/快讯源时，在 fetch_sources() 里
-追加解析函数即可，下游管线不变。
+加新源：写一个 fetch_xxx() 返回 [{title, url, source}]，在 fetch_sources() 里注册即可，
+下游管线不变。若该源本身就带正文，多填一个 "text" 键可省一次正文抓取。
 
 去重状态在 db.py：只有 LLM 给出定论（相关/无关）才停止重判，
 失败和漏答的条目下轮还会再进一次 LLM。
@@ -46,6 +46,74 @@ def fetch_sina() -> list:
     return items
 
 
+def fetch_em() -> list:
+    """东方财富-7×24 全球财经快讯，返回 [{title, url, source, text}]
+
+    接口参数照抄本机 akshare 的 stock_info_global_em（实测可用）。
+    """
+    items = []
+    try:
+        r = requests.get(
+            "https://np-weblist.eastmoney.com/comm/web/getFastNewsList",
+            params={"client": "web", "biz": "web_724", "fastColumn": "102",
+                    "sortEnd": "", "pageSize": "200",
+                    "req_trace": str(int(time.time() * 1000))},
+            headers=HEADERS, timeout=15,
+        )
+        r.raise_for_status()
+        for x in (r.json().get("data") or {}).get("fastNewsList") or []:
+            code = x.get("code") or ""
+            title = x.get("title") or ""
+            summary = x.get("summary") or ""
+            if not code:
+                continue
+            items.append({
+                "title": title or summary[:80],
+                "url": f"https://finance.eastmoney.com/a/{code}.html",
+                "text": summary,
+                "source": "东财",
+            })
+    except Exception as e:
+        print(f"[news] 东财快讯抓取失败: {e}")
+    return items
+
+
+def fetch_jin10() -> list:
+    """金十数据快讯，返回 [{title, url, source, text}]
+
+    x-app-id 等请求头取自本机 akshare 内部实现（实测可用）。
+    只取 type=0 的纯文字快讯，其余类型（数据图/视频）没有正文。
+    """
+    items = []
+    try:
+        r = requests.get(
+            "https://flash-api.jin10.com/get_flash_list",
+            params={"channel": "-8200", "vip": "1"},
+            headers={**HEADERS,
+                     "origin": "https://www.jin10.com",
+                     "referer": "https://www.jin10.com/",
+                     "x-app-id": "rU6QIu7JHe2gOUeR",
+                     "x-version": "1.0.0",
+                     "x-csrf-token": ""},
+            timeout=15,
+        )
+        r.raise_for_status()
+        for x in r.json().get("data") or []:
+            content = ((x.get("data") or {}).get("content") or "").strip()
+            iid = x.get("id")
+            if x.get("type") != 0 or not content or not iid:
+                continue
+            items.append({
+                "title": content[:80],
+                "url": f"https://flash.jin10.com/detail/{iid}",
+                "text": content,
+                "source": "金十",
+            })
+    except Exception as e:
+        print(f"[news] 金十快讯抓取失败: {e}")
+    return items
+
+
 def fetch_sources() -> list:
     """所有资讯源的统一入口。以后在这里追加新源。
 
@@ -53,7 +121,7 @@ def fetch_sources() -> list:
     不去重的话同一 URL 会在同一批出现两次，被判两遍、推两条。
     """
     seen, out = set(), []
-    for it in fetch_sina():
+    for it in fetch_sina() + fetch_em() + fetch_jin10():
         if it["url"] in seen:
             continue
         seen.add(it["url"])
@@ -148,10 +216,11 @@ def run_cycle():
     """跑一轮：抓取 → 关键词过滤 → 是否待判 → 抓正文 → LLM 判断 → 推送 → 落定状态"""
     candidates = [it for it in filter_keywords(fetch_sources())
                   if it["url"] and db.is_new(it["url"])]
-    # 抓正文前先截断，避免老条目积压时每轮发上百个 HTTP 请求
+    # 抓正文前先截断，避免老条目积压时每轮发上百个 HTTP 请求；
+    # 东财/金十在 fetch 阶段自带正文，跳过抓取
     candidates = candidates[:config.NEWS_BATCH_MAX * 2]
     for it in candidates:
-        it["text"] = fetch_body(it["url"])
+        it["text"] = it.get("text") or fetch_body(it["url"])
     print(f"[news] {len(candidates)} 条待判资讯")
 
     if not candidates:

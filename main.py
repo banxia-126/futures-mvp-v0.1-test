@@ -16,6 +16,7 @@ import threading
 import time
 
 import config
+import fundamentals
 import market
 import news
 
@@ -76,6 +77,9 @@ def main():
     if lock is None:
         print("[main] 已有常驻实例在运行，本次退出（要重启请先停掉旧实例）")
         return
+
+    # 基本面落库线程（仓单/库存；不依赖行情和资讯，节假日也安全）
+    threading.Thread(target=fundamentals.loop, daemon=True).start()
 
     # 默认：资讯轮询放后台线程，行情监控在主线程
     if not config.TQ_USER:

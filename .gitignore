@@ -8,6 +8,8 @@ config.py.*
 # ===== 运行时产物（本机数据，与代码无关）=====
 news.db
 news.db.*
+fundamentals.db
+fundamentals.db.*
 log.txt
 .mvp.lock
 __pycache__/
